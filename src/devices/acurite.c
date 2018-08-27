@@ -33,6 +33,7 @@
 #define ACURITE_MSGTYPE_6045M                           0x2f
 #define ACURITE_MSGTYPE_5N1_WINDSPEED_WINDDIR_RAINFALL  0x31
 #define ACURITE_MSGTYPE_5N1_WINDSPEED_TEMP_HUMIDITY     0x38
+#define ACURITE_MSGTYPE_3N1_WINDSPEED_TEMP_HUMIDITY     0x20
 
 
 static char time_str[LOCAL_TIME_BUFLEN];
@@ -146,7 +147,7 @@ static float acurite_getWindSpeed_kph (uint8_t highbyte, uint8_t lowbyte) {
     // range: 0 to 159 kph
     // raw number is cup rotations per 4 seconds
     // http://www.wxforum.net/index.php?topic=27244.0 (found from weewx driver)
-	int highbits = ( highbyte & 0x1F) << 3;
+       int highbits = ( highbyte & 0x1F) << 3;
     int lowbits = ( lowbyte & 0x70 ) >> 4;
     int rawspeed = highbits | lowbits;
     float speed_kph = 0;
@@ -154,6 +155,24 @@ static float acurite_getWindSpeed_kph (uint8_t highbyte, uint8_t lowbyte) {
         speed_kph = rawspeed * 0.8278 + 1.0;
     }
     return speed_kph;
+}
+
+static float acurite_3n1_getTemp (uint8_t highbyte, uint8_t lowbyte) {
+    // Experimentally matched wall unit readings
+    int highbits = (highbyte & 0x7F) << 7 ;
+    int lowbits = lowbyte & 0x7F;
+    int rawtemp = highbits | lowbits;
+    float temp_F = ((rawtemp - 400) / 10.0) - 108;
+    return temp_F;
+}
+
+static float acurite_3n1_getWindSpeed_mph (uint8_t byte) {
+    float speed_mph = 0.0;
+    int rawspeed = ( byte & 0x7F);
+    if (rawspeed > 0) {
+        speed_mph = rawspeed * 0.8272 + 1.0;
+    }
+    return speed_mph;
 }
 
 static int acurite_getHumidity (uint8_t byte) {
@@ -721,6 +740,26 @@ static int acurite_txr_callback(bitbuffer_t *bitbuf) {
             data = data_make(
                 "time",         "",   DATA_STRING,    time_str,
                 "model",        "",   DATA_STRING,    "Acurite 5n1 sensor",
+                "sensor_id",    NULL, DATA_INT,  sensor_id, // @todo normalize to "id" at 1.0 release.
+                "channel",      NULL,   DATA_STRING,    &channel_str,
+                "sequence_num",  NULL,   DATA_INT,      sequence_num,
+                "battery",      NULL,   DATA_STRING,    battery_low ? "OK" : "LOW",
+                "message_type", NULL,   DATA_INT,       message_type,
+                "wind_speed_mph",   "wind_speed",   DATA_FORMAT,    "%.1f mph", DATA_DOUBLE,     wind_speed_mph,
+                "temperature_F", 	"temperature",	DATA_FORMAT,    "%.1f F", DATA_DOUBLE,    tempf,
+                "humidity",     NULL,	DATA_FORMAT,    "%d",   DATA_INT,   humidity,
+                NULL);
+            data_acquired_handler(data);
+
+      } else if (message_type == ACURITE_MSGTYPE_3N1_WINDSPEED_TEMP_HUMIDITY) {
+            // Wind speed, temperature and humidity
+            wind_speed_mph = acurite_3n1_getWindSpeed_mph(bb[6]);
+            tempf = acurite_3n1_getTemp(bb[4], bb[5]);
+            humidity = acurite_getHumidity(bb[3]);
+
+            data = data_make(
+                "time",         "",   DATA_STRING,    time_str,
+                "model",        "",   DATA_STRING,    "Acurite 3n1 sensor",
                 "sensor_id",    NULL, DATA_INT,  sensor_id, // @todo normalize to "id" at 1.0 release.
                 "channel",      NULL,   DATA_STRING,    &channel_str,
                 "sequence_num",  NULL,   DATA_INT,      sequence_num,
